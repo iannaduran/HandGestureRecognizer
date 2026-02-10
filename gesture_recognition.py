@@ -7,7 +7,7 @@ import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 
 # Thumbs down
 # Victory (Peace Sign)
@@ -15,6 +15,13 @@ from PIL import Image, ImageTk
 # Pointing
 # Fist Closed
 # Open palm
+
+# Directory to store the screenshots
+screenshot_folder = "Dataset"
+
+# Create the directory if it doesn't exist
+if not os.path.exists(screenshot_folder):
+    os.makedirs(screenshot_folder)
 
 # ----------------------------
 # Initialize GestureRecognizer object
@@ -37,6 +44,11 @@ recognition_running = False
 frame_to_process = None
 processed_frame = None
 lock = threading.Lock()
+
+# Screenshot-on-gesture toggle and rate limiting
+screenshot_on_gesture = False
+last_screenshot_time = 0.0
+screenshot_cooldown = 2.0  # seconds between automatic screenshots
 
 
 # ----------------------------
@@ -65,6 +77,7 @@ def annotate_frame(frame, top_gesture, hand_landmarks):
 # ----------------------------
 def process_gestures():
     global frame_to_process, processed_frame, recognition_running
+    global screenshot_on_gesture, last_screenshot_time
 
     while recognition_running:
         local_frame = None
@@ -92,6 +105,21 @@ def process_gestures():
         with lock:
             processed_frame = local_frame
 
+        # If screenshot-on-gesture is enabled and a gesture was detected,
+        # capture the screen (rate-limited) and save it to the dataset folder.
+        if screenshot_on_gesture and top_gesture:
+            now = time.time()
+            if now - last_screenshot_time >= screenshot_cooldown:
+                try:
+                    img = ImageGrab.grab()
+                    ts = time.strftime("%Y%m%d-%H%M%S")
+                    gesture_name = top_gesture.category_name.replace(" ", "_") if top_gesture.category_name else "gesture"
+                    filename = os.path.join(screenshot_folder, f"screenshot_{gesture_name}_{ts}.png")
+                    img.save(filename)
+                    print(f"Saved screenshot: {filename}")
+                    last_screenshot_time = now
+                except Exception as e:
+                    print(f"Failed to take screenshot: {e}")
         time.sleep(0.005)
 
 
@@ -144,6 +172,15 @@ def start_recognition():
     threading.Thread(target=process_gestures, daemon=True).start()
 
 
+def toggle_screenshot():
+    global screenshot_on_gesture
+    screenshot_on_gesture = not screenshot_on_gesture
+    if screenshot_on_gesture:
+        screenshot_button.config(text="Screenshot: ON", bg="#FFEB3B")
+    else:
+        screenshot_button.config(text="Screenshot: OFF", bg="#9E9E9E")
+
+
 # ----------------------------
 # Function to stop recognition
 # ----------------------------
@@ -188,8 +225,12 @@ stop_button = tk.Button(btn_frame, text="Stop", command=stop_recognition,
                         width=12, state=tk.DISABLED, bg="#9E9E9E")
 stop_button.grid(row=0, column=1, padx=8)
 
+screenshot_button = tk.Button(btn_frame, text="Screenshot: OFF", command=toggle_screenshot,
+                              width=14, bg="#9E9E9E")
+screenshot_button.grid(row=0, column=2, padx=8)
+
 exit_button = tk.Button(btn_frame, text="Exit", command=exit_app, width=12)
-exit_button.grid(row=0, column=2, padx=8)
+exit_button.grid(row=0, column=3, padx=8)
 
 # ----------------------------
 # Camera init + run
