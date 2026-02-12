@@ -9,12 +9,6 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from PIL import Image, ImageTk, ImageGrab
 
-# Thumbs down
-# Victory (Peace Sign)
-# Thumbs up
-# Pointing
-# Fist Closed
-# Open palm
 
 # Directory to store the screenshots
 screenshot_folder = "Dataset"
