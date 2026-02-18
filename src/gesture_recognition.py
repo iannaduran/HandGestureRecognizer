@@ -10,6 +10,20 @@ from mediapipe.tasks.python import vision
 from PIL import Image, ImageTk, ImageGrab
 
 
+# ----------------------------
+# UI color palette (dark theme)
+# ----------------------------
+C_BG      = "#0F0F17"   # main background
+C_PANEL   = "#1A1A27"   # card / panel surfaces
+C_ACCENT  = "#6366F1"   # indigo accent (camera border)
+C_SUCCESS = "#22C55E"   # green  – Start button / running indicator
+C_DANGER  = "#EF4444"   # red    – Stop (active) / Exit
+C_WARN    = "#F59E0B"   # amber  – Auto-Capture ON
+C_MUTED   = "#374151"   # grey   – disabled state
+C_TEXT    = "#F1F5F9"   # primary text
+C_SUBTEXT = "#94A3B8"   # secondary / status text
+
+
 # Directory to store the screenshots
 screenshot_folder = "Dataset"
 
@@ -42,20 +56,15 @@ lock = threading.Lock()
 # Screenshot-on-gesture toggle and rate limiting
 screenshot_on_gesture = False
 last_screenshot_time = 0.0
-screenshot_cooldown = 2.0  # seconds between automatic screenshots
+screenshot_cooldown = 5.0  # seconds between automatic screenshots
+current_gesture_text = "—  No gesture detected"  # shown in the UI gesture label
 
 
 # ----------------------------
 # Function to annotate the frame with gesture and landmarks
 # ----------------------------
-def annotate_frame(frame, top_gesture, hand_landmarks):
+def annotate_frame(frame, hand_landmarks):
     h, w, _ = frame.shape
-
-    # Display the recognized gesture
-    if top_gesture:
-        text = f"Gesture: {top_gesture.category_name} ({top_gesture.score:.2f})"
-        cv2.putText(frame, text, (10, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
     # Draw hand landmarks
     if hand_landmarks:
@@ -71,7 +80,7 @@ def annotate_frame(frame, top_gesture, hand_landmarks):
 # ----------------------------
 def process_gestures():
     global frame_to_process, processed_frame, recognition_running
-    global screenshot_on_gesture, last_screenshot_time
+    global screenshot_on_gesture, last_screenshot_time, current_gesture_text
 
     while recognition_running:
         local_frame = None
@@ -94,7 +103,16 @@ def process_gestures():
         hand_landmarks = recognition_result.hand_landmarks if recognition_result.hand_landmarks else []
 
         # Annotate the ORIGINAL BGR frame (so OpenCV drawing colors look right)
-        annotate_frame(local_frame, top_gesture, hand_landmarks)
+        annotate_frame(local_frame, hand_landmarks)
+
+        # Update gesture status for the UI label (read by the main thread in update_frame)
+        if top_gesture:
+            current_gesture_text = (
+                f"✋  {top_gesture.category_name}"
+                f"   —   {top_gesture.score:.0%} confidence"
+            )
+        else:
+            current_gesture_text = "—  No gesture detected"
 
         with lock:
             processed_frame = local_frame
@@ -146,43 +164,53 @@ def update_frame():
     label_img.imgtk = imgtk
     label_img.configure(image=imgtk)
 
+    # Sync gesture status label from background thread's last result
+    gesture_var.set(current_gesture_text)
+
     # Call update_frame again after 10 ms
     label_img.after(10, update_frame)
 
 
-# ----------------------------
-# Function to start recognition
-# ----------------------------
-def start_recognition():
+def toggle_recognition():
     global recognition_running
     if recognition_running:
-        return
-
-    recognition_running = True
-    start_button.config(state=tk.DISABLED, bg="#4CAF50", fg="white")
-    stop_button.config(state=tk.NORMAL, bg="#F44336", fg="white")
-
-    # Start a separate thread for gesture processing
-    threading.Thread(target=process_gestures, daemon=True).start()
+        # ── Stop ──
+        recognition_running = False
+        toggle_button.config(text="▶  Start", bg=C_SUCCESS, fg=C_TEXT)
+        status_bar.config(text="●  Stopped", fg=C_SUBTEXT)
+        gesture_var.set("—  No gesture detected")
+    else:
+        # ── Start ──
+        recognition_running = True
+        toggle_button.config(text="■  Stop", bg=C_DANGER, fg=C_TEXT)
+        if screenshot_on_gesture:
+            _update_capture_countdown()
+        else:
+            status_bar.config(text="●  Recognition running", fg=C_SUCCESS)
+        threading.Thread(target=process_gestures, daemon=True).start()
 
 
 def toggle_screenshot():
-    global screenshot_on_gesture
+    global screenshot_on_gesture, last_screenshot_time
     screenshot_on_gesture = not screenshot_on_gesture
     if screenshot_on_gesture:
-        screenshot_button.config(text="Screenshot: ON", bg="#FFEB3B")
+        last_screenshot_time = time.time()  # start the cooldown fresh when enabled
+        screenshot_button.config(text="◉  Auto-Capture: ON", bg=C_WARN, fg="#0F0F17")
+        if recognition_running:
+            _update_capture_countdown()
     else:
-        screenshot_button.config(text="Screenshot: OFF", bg="#9E9E9E")
+        screenshot_button.config(text="◉  Auto-Capture: OFF", bg=C_MUTED, fg=C_TEXT)
+        if recognition_running:
+            status_bar.config(text="●  Recognition running", fg=C_SUCCESS)
 
 
-# ----------------------------
-# Function to stop recognition
-# ----------------------------
-def stop_recognition():
-    global recognition_running
-    recognition_running = False
-    stop_button.config(state=tk.DISABLED, bg="#9E9E9E", fg="black")
-    start_button.config(state=tk.NORMAL, bg="#4CAF50", fg="white")
+def _update_capture_countdown():
+    """Tick every 500 ms and show remaining seconds until the next auto-capture."""
+    if not (screenshot_on_gesture and recognition_running):
+        return  # one of the conditions dropped — let the ticker die naturally
+    remaining = max(0.0, screenshot_cooldown - (time.time() - last_screenshot_time))
+    status_bar.config(text=f"◉  Next capture in  {remaining:.0f}s", fg=C_WARN)
+    root.after(500, _update_capture_countdown)
 
 
 # ----------------------------
@@ -201,30 +229,82 @@ def exit_app():
 # Initialize the Tkinter window
 # ----------------------------
 root = tk.Tk()
-root.title("Hand Gesture Recognition")
-root.geometry("800x600")
-root.configure(bg="#2196F3")
+root.title("Hand Gesture Recognizer")
+root.resizable(False, False)
+root.configure(bg=C_BG)
 
-label_img = tk.Label(root, bg="#2196F3")
-label_img.pack(pady=10)
+# ── Header ───────────────────────────────────────────────────────────
+header = tk.Frame(root, bg=C_BG)
+header.pack(fill=tk.X, padx=28, pady=(20, 14))
 
-btn_frame = tk.Frame(root, bg="#2196F3")
-btn_frame.pack(pady=10)
+tk.Label(header, text="Hand Gesture Recognizer",
+         font=("Helvetica", 18, "bold"), bg=C_BG, fg=C_TEXT).pack()
+tk.Label(header, text="Real-time detection via MediaPipe",
+         font=("Helvetica", 10), bg=C_BG, fg=C_SUBTEXT).pack()
 
-start_button = tk.Button(btn_frame, text="Start", command=start_recognition,
-                         width=12, bg="#4CAF50", fg="white")
-start_button.grid(row=0, column=0, padx=8)
+# ── Camera view (accent border → dark inner frame → live feed) ────────
+cam_border = tk.Frame(root, bg=C_ACCENT, padx=2, pady=2)
+cam_border.pack(padx=28)
 
-stop_button = tk.Button(btn_frame, text="Stop", command=stop_recognition,
-                        width=12, state=tk.DISABLED, bg="#9E9E9E")
-stop_button.grid(row=0, column=1, padx=8)
+cam_inner = tk.Frame(cam_border, bg=C_PANEL)
+cam_inner.pack()
 
-screenshot_button = tk.Button(btn_frame, text="Screenshot: OFF", command=toggle_screenshot,
-                              width=14, bg="#9E9E9E")
-screenshot_button.grid(row=0, column=2, padx=8)
+label_img = tk.Label(cam_inner, bg=C_PANEL)
+label_img.pack()
 
-exit_button = tk.Button(btn_frame, text="Exit", command=exit_app, width=12)
-exit_button.grid(row=0, column=3, padx=8)
+# ── Gesture status label ──────────────────────────────────────────────
+gesture_var = tk.StringVar(value="—  No gesture detected")
+
+gesture_label = tk.Label(
+    root,
+    textvariable=gesture_var,
+    font=("Helvetica", 17, "bold"),
+    bg=C_PANEL, fg=C_TEXT,
+    anchor="center",
+    padx=0, pady=16,
+)
+gesture_label.pack(fill=tk.X, padx=28, pady=(10, 0))
+
+# ── Control buttons ───────────────────────────────────────────────────
+btn_frame = tk.Frame(root, bg=C_BG)
+btn_frame.pack(pady=16)
+
+
+def _btn(parent, text, cmd, bg, fg=C_TEXT, width=16):
+    # Use tk.Label instead of tk.Button — on macOS, tk.Button uses native Aqua
+    # rendering that ignores bg/fg entirely. tk.Label honours all colour settings.
+    b = tk.Label(
+        parent, text=text,
+        font=("Helvetica", 10, "bold"),
+        width=width, bg=bg, fg=fg,
+        padx=10, pady=8,
+        cursor="hand2",
+        anchor="center",
+        relief=tk.FLAT,
+    )
+    b.bind("<Button-1>", lambda *_: cmd())
+    b.bind("<Enter>",    lambda *_: b.config(relief=tk.GROOVE))
+    b.bind("<Leave>",    lambda *_: b.config(relief=tk.FLAT))
+    return b
+
+
+toggle_button     = _btn(btn_frame, "▶  Start",             toggle_recognition, C_SUCCESS)
+screenshot_button = _btn(btn_frame, "◉  Auto-Capture: OFF", toggle_screenshot,  C_MUTED, width=20)
+exit_button       = _btn(btn_frame, "✕  Exit",              exit_app,           C_DANGER)
+
+toggle_button.grid    (row=0, column=0, padx=6)
+screenshot_button.grid(row=0, column=1, padx=6)
+exit_button.grid      (row=0, column=2, padx=6)
+
+# ── Status bar ────────────────────────────────────────────────────────
+status_bar = tk.Label(
+    root,
+    text="●  Ready",
+    font=("Helvetica", 9),
+    bg="#09090F", fg=C_SUBTEXT,
+    anchor="w", padx=14, pady=5,
+)
+status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
 # ----------------------------
 # Camera init + run
