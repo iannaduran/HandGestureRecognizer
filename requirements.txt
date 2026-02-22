@@ -1,3 +1,9 @@
 mediapipe
 opencv-python
 Pillow
+numpy
+pandas
+scikit-learn
+tqdm
+seaborn
+matplotlib
