@@ -36,7 +36,7 @@ HAGRID_TO_MEDIAPIPE = {
     "like": "Thumb_Up",
     "dislike": "Thumb_Down",
     "peace": "Victory",
-    "point": "Pointing_Up",
+    "one": "Pointing_Up",
     "fist": "Closed_Fist",
     "palm": "Open_Palm"
 }
