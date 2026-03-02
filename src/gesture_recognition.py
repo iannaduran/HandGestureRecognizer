@@ -7,7 +7,7 @@ import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from PIL import Image, ImageTk, ImageGrab
+from PIL import Image, ImageTk
 
 
 # ----------------------------
@@ -102,6 +102,9 @@ def process_gestures():
         top_gesture = recognition_result.gestures[0][0] if recognition_result.gestures else None
         hand_landmarks = recognition_result.hand_landmarks if recognition_result.hand_landmarks else []
 
+        # Save a clean copy before drawing landmarks (cleaner for dataset use)
+        save_frame = local_frame.copy()
+
         # Annotate the ORIGINAL BGR frame (so OpenCV drawing colors look right)
         annotate_frame(local_frame, hand_landmarks)
 
@@ -123,15 +126,14 @@ def process_gestures():
             now = time.time()
             if now - last_screenshot_time >= screenshot_cooldown:
                 try:
-                    img = ImageGrab.grab()
                     ts = time.strftime("%Y%m%d-%H%M%S")
                     gesture_name = top_gesture.category_name.replace(" ", "_") if top_gesture.category_name else "gesture"
-                    filename = os.path.join(screenshot_folder, f"screenshot_{gesture_name}_{ts}.png")
-                    img.save(filename)
-                    print(f"Saved screenshot: {filename}")
+                    filename = os.path.join(screenshot_folder, f"{gesture_name}_{ts}.png")
+                    cv2.imwrite(filename, save_frame)
+                    print(f"Saved frame: {filename}")
                     last_screenshot_time = now
                 except Exception as e:
-                    print(f"Failed to take screenshot: {e}")
+                    print(f"Failed to save frame: {e}")
         time.sleep(0.005)
 
 
